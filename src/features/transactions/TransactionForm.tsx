@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { currencySymbols } from '@/config/currency';
 import { translateCategory } from '@/i18n/messages';
 import { useAppPreferences } from '@/providers/AppPreferencesProvider';
-import type { Category, ExpensePlan, TxType } from '@/lib/store';
+import type { Category, ExpensePlan, Transaction, TxType } from '@/lib/store';
 import { FastPressable, Glyph } from '@/components/AppComponents';
 import { DatePickerField } from '@/components/DatePickerField';
 
@@ -13,6 +13,7 @@ export type TransactionDraft = {
   amount: number;
   kind: TxType;
   category: string;
+  date: string;
   note: string;
   reminderAt: Date | null;
   planId: number | null;
@@ -49,26 +50,30 @@ function CategoryChip({ category, active, onPress }: { category: Category; activ
   </FastPressable>;
 }
 
-export function TransactionForm({ currency, categories, plans = [], initialKind = 'expense', onSave, onCancel }: {
+export function TransactionForm({ currency, categories, plans = [], initialKind = 'expense', initialTransaction, isEditing = false, onSave, onCancel }: {
   currency: string;
   categories: Category[];
   plans?: ExpensePlan[];
   initialKind?: TxType;
+  initialTransaction?: Transaction;
+  isEditing?: boolean;
   onSave: (data: TransactionDraft) => Promise<void>;
   onCancel: () => void;
 }) {
   const { styles, colors, t, language } = useAppPreferences();
-  const [kind, setKind] = useState<TxType>(initialKind);
-  const [amount, setAmount] = useState('');
-  const [title, setTitle] = useState('');
-  const [category, setCategory] = useState('');
-  const [note, setNote] = useState('');
-  const [planId, setPlanId] = useState<number | null>(null);
-  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [kind, setKind] = useState<TxType>(initialTransaction?.kind ?? initialKind);
+  const [amount, setAmount] = useState(initialTransaction ? String(initialTransaction.amount) : '');
+  const [title, setTitle] = useState(initialTransaction?.title ?? '');
+  const [category, setCategory] = useState(initialTransaction?.category ?? '');
+  const [transactionDate, setTransactionDate] = useState(initialTransaction ? localDate(new Date(initialTransaction.date)) : localDate(new Date()));
+  const [note, setNote] = useState(initialTransaction?.note ?? '');
+  const [planId, setPlanId] = useState<number | null>(initialTransaction?.planId ?? null);
+  const [reminderEnabled, setReminderEnabled] = useState(Boolean(initialTransaction?.reminderAt));
   const suggested = new Date(Date.now() + 60 * 60 * 1000);
   suggested.setMinutes(Math.ceil(suggested.getMinutes() / 5) * 5, 0, 0);
-  const [reminderDate, setReminderDate] = useState(localDate(suggested));
-  const [reminderTime, setReminderTime] = useState(localTime(suggested));
+  const initialReminder = initialTransaction?.reminderAt ? new Date(initialTransaction.reminderAt) : suggested;
+  const [reminderDate, setReminderDate] = useState(localDate(initialReminder));
+  const [reminderTime, setReminderTime] = useState(localTime(initialReminder));
   const available = categories.filter((item) => item.kind === kind);
 
   useEffect(() => {
@@ -85,13 +90,14 @@ export function TransactionForm({ currency, categories, plans = [], initialKind 
       reminderAt = parseReminder(reminderDate, reminderTime);
       if (!reminderAt) return Alert.alert(t('invalidReminder'), t('futureReminder'));
     }
-    void onSave({ title: title.trim(), amount: parsedAmount, kind, category, note: note.trim(), reminderAt, planId: kind === 'expense' ? planId : null });
+    void onSave({ title: title.trim(), amount: parsedAmount, kind, category, date: transactionDate, note: note.trim(), reminderAt, planId: kind === 'expense' ? planId : null });
   };
 
   return <ScrollView style={styles.formScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
     <View style={styles.kindSwitch}>{(['expense', 'income'] as TxType[]).map((value) => <FastPressable key={value} onPress={() => setKind(value)} style={[styles.kindOption, kind === value && styles.kindOptionActive]}><Text style={[styles.kindOptionText, kind === value && styles.kindOptionTextActive]}>{value === 'expense' ? t('expense') : t('incomeType')}</Text></FastPressable>)}</View>
     <Text style={styles.fieldLabel}>{t('amount')}  /  {currency}</Text><View style={styles.amountField}><Text style={styles.amountCurrency}>{currencySymbols[currency]}</Text><TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.placeholder} style={styles.amountInput} /></View>
     <Text style={styles.fieldLabel}>{t('whatWasIt')}</Text><TextInput value={title} onChangeText={setTitle} placeholder={kind === 'income' ? t('catSalary') : t('catFood')} placeholderTextColor={colors.muted} style={styles.textField} maxLength={50} />
+    <Text style={styles.fieldLabel}>{t('transactionDate')}</Text><DatePickerField value={transactionDate} onChange={setTransactionDate} />
     {kind === 'expense' && plans.length > 0 && <>
       <Text style={styles.fieldLabel}>{t('tripOptional')}</Text>
       <View style={styles.categoryGrid}>
@@ -107,7 +113,7 @@ export function TransactionForm({ currency, categories, plans = [], initialKind 
       <View style={styles.reminderField}><Text style={styles.fieldLabel}>{t('reminderTime')}</Text><TextInput value={reminderTime} onChangeText={setReminderTime} keyboardType="numbers-and-punctuation" placeholder="HH:MM" placeholderTextColor={colors.placeholder} style={styles.textField} /></View>
     </View>}
     <Text style={styles.fieldLabel}>{t('noteOptional')}</Text><TextInput value={note} onChangeText={setNote} placeholder="" placeholderTextColor={colors.muted} style={styles.textField} maxLength={100} />
-    <FastPressable style={styles.submitButton} onPress={submit}><Text style={styles.submitButtonText}>{t('saveEntry')}</Text><Glyph name="arrow-forward" size={17} color={colors.ink} /></FastPressable><FastPressable onPress={onCancel} style={styles.cancelButton}><Text style={styles.cancelText}>{t('cancel')}</Text></FastPressable>
+    <FastPressable style={styles.submitButton} onPress={submit}><Text style={styles.submitButtonText}>{t(isEditing ? 'saveChanges' : 'saveEntry')}</Text><Glyph name="arrow-forward" size={17} color={colors.ink} /></FastPressable><FastPressable onPress={onCancel} style={styles.cancelButton}><Text style={styles.cancelText}>{t('cancel')}</Text></FastPressable>
   </ScrollView>;
 }
 

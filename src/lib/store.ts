@@ -158,6 +158,9 @@ export async function setPreference(db: SQLiteDatabase, key: string, value: stri
 export async function addTransaction(db: SQLiteDatabase, tx: Omit<Transaction, 'id'>) {
   await db.runAsync('INSERT INTO transactions (title, amount, kind, category, date, note, currency_code, plan_id, reminder_at, reminder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', tx.title, tx.amount, tx.kind, tx.category, tx.date, tx.note, tx.currencyCode, tx.planId ?? null, tx.reminderAt ?? null, tx.reminderId ?? null);
 }
+export async function updateTransaction(db: SQLiteDatabase, id: number, tx: Omit<Transaction, 'id'>) {
+  await db.runAsync('UPDATE transactions SET title = ?, amount = ?, kind = ?, category = ?, note = ?, currency_code = ?, plan_id = ?, reminder_at = ?, reminder_id = ? WHERE id = ?', tx.title, tx.amount, tx.kind, tx.category, tx.note, tx.currencyCode, tx.planId ?? null, tx.reminderAt ?? null, tx.reminderId ?? null, id);
+}
 export async function removeTransaction(db: SQLiteDatabase, id: number) {
   await db.runAsync('DELETE FROM transactions WHERE id = ?', id);
 }

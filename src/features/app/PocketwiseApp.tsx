@@ -12,7 +12,7 @@ import { SettingsScreen } from '@/features/settings/SettingsScreen';
 import { OnboardingScreen } from '@/features/onboarding/OnboardingScreen';
 import { TransactionForm, type TransactionDraft } from '@/features/transactions/TransactionForm';
 import { useAppPreferences } from '@/providers/AppPreferencesProvider';
-import { addTransaction, createCategory, createExpensePlan, getPreference, readBudgets, readCategories, readExpensePlans, readTransactions, removeExpensePlan, removeTransaction, saveBudget, setPreference, type Budget, type Category, type ExpensePlan, type Transaction, type TxType } from '@/lib/store';
+import { addTransaction, createCategory, createExpensePlan, getPreference, readBudgets, readCategories, readExpensePlans, readTransactions, removeExpensePlan, removeTransaction, saveBudget, setPreference, updateTransaction, type Budget, type Category, type ExpensePlan, type Transaction, type TxType } from '@/lib/store';
 import { cancelExpenseReminder, disableBillReminder, disableDailyReminder, enableBillReminder, enableDailyReminder, scheduleExpenseReminder } from '@/lib/reminders';
 import { translateCategory, type Language } from '@/i18n/messages';
 import { balanceCardStyles, categoryColors } from '@/theme/tokens';
@@ -62,6 +62,7 @@ function PocketwiseContent() {
   const [fontsLoaded] = useFonts({ Geist: require('../../../assets/fonts/Geist-Variable.ttf') });
   const [tab, setTab] = useState<Tab>('Home');
   const [modal, setModal] = useState<ModalKind>(null);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -178,19 +179,24 @@ function PocketwiseContent() {
 
   const handleSaveTransaction = async (data: TransactionDraft) => {
     let reminderId: string | null = null;
+    const existingTransaction = editingTransaction;
     try {
       if (data.reminderAt) reminderId = await scheduleExpenseReminder({ title: data.title, category: translateCategory(language, data.category), date: data.reminderAt, language });
-      await addTransaction(db, { ...data, currencyCode: currency, reminderAt: data.reminderAt?.toISOString() ?? null, reminderId, date: new Date().toISOString() });
+      const transaction = { ...data, currencyCode: currency, reminderAt: data.reminderAt?.toISOString() ?? null, reminderId, date: new Date(`${data.date}T12:00:00`).toISOString() };
+      if (existingTransaction) await updateTransaction(db, existingTransaction.id, transaction);
+      else await addTransaction(db, transaction);
     } catch (error) {
       await cancelExpenseReminder(reminderId);
       Alert.alert(t('notificationsUnavailable'), error instanceof Error ? error.message : t('notificationsUnavailable'));
       return;
     }
+    if (existingTransaction?.reminderId) void cancelExpenseReminder(existingTransaction.reminderId).catch(() => undefined);
     setModal(null);
+    setEditingTransaction(null);
     void readTransactions(db).then(setTransactions);
     if (onboardingStep === 1 && data.kind === 'income') setOnboardingStep(2);
     if (onboardingStep === 2 && data.kind === 'expense') setOnboardingStep(3);
-    if (data.kind === 'expense') {
+    if (data.kind === 'expense' && !existingTransaction) {
       const budget = displayBudgets.find((item) => item.category === data.category);
       const priorSpend = spending[data.category] ?? 0;
       const total = priorSpend + data.amount;
@@ -272,7 +278,8 @@ function PocketwiseContent() {
     { text: t('delete'), style: 'destructive', onPress: () => { void cancelExpenseReminder(tx.reminderId).then(() => removeTransaction(db, tx.id)).then(() => readTransactions(db)).then(setTransactions); } },
   ]);
 
-  const addAction = () => setModal('transaction');
+  const addAction = () => { setEditingTransaction(null); setModal('transaction'); };
+  const editTransaction = (transaction: Transaction) => { setEditingTransaction(transaction); setModal('transaction'); };
   const finishOnboarding = async () => {
     await setPreference(db, 'onboardingComplete', 'true');
     setOnboardingStep(4);
@@ -282,11 +289,12 @@ function PocketwiseContent() {
     const color = metadata?.color ?? (tx.kind === 'income' ? T.green : T.blue);
     const glyph = transactionIcon(metadata, tx.kind);
     return (
-      <Tactile key={tx.id} onLongPress={() => deleteTx(tx)} style={styles.txTactile} accessibilityLabel={`${tx.title}, ${formatMoney(tx.amount)}`}>
+      <Tactile key={tx.id} onPress={() => editTransaction(tx)} onLongPress={() => deleteTx(tx)} style={styles.txTactile} accessibilityLabel={`${t('editEntry')}: ${tx.title}, ${formatMoney(tx.amount)}`}>
         <View style={styles.txRow}>
           <View style={[styles.txGlyph, { backgroundColor: color }]}><Glyph name={glyph} size={17} color={tx.kind === 'income' ? T.ink : T.white} /></View>
           <View style={styles.txCopy}><Text numberOfLines={1} style={styles.txName}>{tx.title}</Text><Text style={styles.txMeta}>{translateCategory(language, tx.category)}  /  {new Date(tx.date).toLocaleDateString(language === 'ar' ? 'ar' : 'en-US', { month: 'short', day: 'numeric' })}</Text></View>
           <Text style={[styles.txMoney, tx.kind === 'income' && styles.incomeText]}>{tx.kind === 'income' ? '+' : '−'}{formatMoney(tx.amount)}</Text>
+          <Glyph name="create-outline" size={14} color={T.muted} />
         </View>
       </Tactile>
     );
@@ -472,8 +480,8 @@ function PocketwiseContent() {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalDock}>
             <View style={[styles.sheet, (modal === 'transaction' || modal === 'plan' || modal === 'budget') && styles.sheetTall, { paddingBottom: Math.max(insets.bottom, 12) }]}>
               <View style={styles.sheetHandle} />
-              <View style={styles.sheetHeader}><Text style={styles.sheetTitle}>{modal === 'budget' ? t('setLimit') : modal === 'category' ? t('addCategory') : modal === 'plan' ? t('newPlan') : modal === 'cardStyle' ? t('cardDesign') : t('newEntry')}</Text><Pressable onPress={() => setModal(null)} style={styles.closeButton}><Glyph name="close" size={18} color={T.ink} /></Pressable></View>
-              {modal === 'transaction' ? <TransactionForm currency={currency} categories={categories} plans={expensePlans.filter((plan) => plan.kind === 'trip')} onSave={handleSaveTransaction} onCancel={() => setModal(null)} /> : modal === 'budget' ? <BudgetForm budgets={displayBudgets} categories={categories.filter((item) => item.kind === 'expense')} currency={currency} onSave={handleSaveBudget} onCancel={() => setModal(null)} /> : modal === 'plan' ? <ExpensePlanForm categories={categories.filter((item) => item.kind === 'expense')} currency={currency} onSave={handleCreateExpensePlan} onCancel={() => setModal(null)} /> : modal === 'cardStyle' ? <BalanceCardStylePicker selected={balanceCardStyle} onSelect={(value) => { setBalanceCardStyle(value); setModal(null); }} /> : <CategoryForm onSave={handleCreateCategory} onCancel={() => setModal(null)} />}
+              <View style={styles.sheetHeader}><Text style={styles.sheetTitle}>{modal === 'budget' ? t('setLimit') : modal === 'category' ? t('addCategory') : modal === 'plan' ? t('newPlan') : modal === 'cardStyle' ? t('cardDesign') : editingTransaction ? t('editEntry') : t('newEntry')}</Text><Pressable onPress={() => { setModal(null); setEditingTransaction(null); }} style={styles.closeButton}><Glyph name="close" size={18} color={T.ink} /></Pressable></View>
+              {modal === 'transaction' ? <TransactionForm key={editingTransaction?.id ?? 'new'} currency={currency} categories={categories} plans={expensePlans.filter((plan) => plan.kind === 'trip')} initialTransaction={editingTransaction ?? undefined} isEditing={!!editingTransaction} onSave={handleSaveTransaction} onCancel={() => { setModal(null); setEditingTransaction(null); }} /> : modal === 'budget' ? <BudgetForm budgets={displayBudgets} categories={categories.filter((item) => item.kind === 'expense')} currency={currency} onSave={handleSaveBudget} onCancel={() => setModal(null)} /> : modal === 'plan' ? <ExpensePlanForm categories={categories.filter((item) => item.kind === 'expense')} currency={currency} onSave={handleCreateExpensePlan} onCancel={() => setModal(null)} /> : modal === 'cardStyle' ? <BalanceCardStylePicker selected={balanceCardStyle} onSelect={(value) => { setBalanceCardStyle(value); setModal(null); }} /> : <CategoryForm onSave={handleCreateCategory} onCancel={() => setModal(null)} />}
             </View>
           </KeyboardAvoidingView>
         </Modal>
