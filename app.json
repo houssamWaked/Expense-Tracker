@@ -12,6 +12,7 @@
     },
     "android": {
       "package": "com.houssamwaked.pocketwise",
+      "versionCode": 2,
       "adaptiveIcon": {
         "backgroundColor": "#20231D",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
